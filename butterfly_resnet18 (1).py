@@ -15,7 +15,6 @@ from torchvision import transforms
 from torchvision.models import resnet18
 from sklearn.model_selection import StratifiedKFold
 
-# set seeds for reproducibility
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
@@ -39,7 +38,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 
-# dataset class for training images
+#train dataset
 class ButterflyDataset(Dataset):
     def __init__(self, df, img_dir, label2idx, transform=None):
         self.df = df.reset_index(drop=True)
@@ -59,7 +58,7 @@ class ButterflyDataset(Dataset):
         return img, label
 
 
-# dataset class for test images (no labels)
+#test dataset
 class TestDataset(Dataset):
     def __init__(self, img_dir, image_ids, transform=None):
         self.img_dir = img_dir
@@ -77,7 +76,7 @@ class TestDataset(Dataset):
         return img, img_id
 
 
-# data augmentation for training
+#img augmentation 
 train_transform = transforms.Compose([
     transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
     transforms.RandomHorizontalFlip(),
@@ -92,29 +91,29 @@ train_transform = transforms.Compose([
     transforms.RandomErasing(p=0.25, scale=(0.02, 0.2)),
 ])
 
-# no augmentation for validation
+
 val_transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
 ])
 
-# test time augmentation - average predictions over different views
+#test time aum
 tta_transforms = [
     val_transform,
-    transforms.Compose([  # horizontal flip
+    transforms.Compose([  
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
         transforms.RandomHorizontalFlip(p=1.0),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
-    transforms.Compose([  # center crop from larger size
+    transforms.Compose([  
         transforms.Resize((256, 256)),
         transforms.CenterCrop(IMG_SIZE),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ]),
-    transforms.Compose([  # center crop + flip
+    transforms.Compose([  
         transforms.Resize((256, 256)),
         transforms.CenterCrop(IMG_SIZE),
         transforms.RandomHorizontalFlip(p=1.0),
@@ -125,16 +124,15 @@ tta_transforms = [
 
 
 def build_model():
-    # using torchvision resnet18 with NO pretrained weights
+    #torchvision resnet18
     model = resnet18(weights=None, num_classes=NUM_CLASSES)
 
-    # add dropout before final fc layer
+    #dropout
     model.fc = nn.Sequential(
         nn.Dropout(p=0.3),
         nn.Linear(512, NUM_CLASSES),
     )
 
-    # kaiming init for better convergence
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -147,8 +145,6 @@ def build_model():
 
     return model
 
-
-# mixup: blend pairs of images and labels for regularization
 def mixup_data(x, y, alpha=0.2):
     lam = np.random.beta(alpha, alpha) if alpha > 0 else 1.0
     idx = torch.randperm(x.size(0), device=x.device)
@@ -158,7 +154,6 @@ def mixup_data(x, y, alpha=0.2):
 
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
-
 
 def train_one_epoch(model, loader, criterion, optimizer, scheduler):
     model.train()
@@ -183,7 +178,6 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler):
 
     scheduler.step()
     return total_loss / total, 100.0 * correct / total
-
 
 @torch.no_grad()
 def validate(model, loader, criterion):
@@ -217,7 +211,7 @@ def plot_curves(history, path):
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
 
-    # accuracy
+    # acc
     axes[0, 1].plot(epochs, history["train_acc"], label="Train", color="#2196F3", lw=1.5)
     axes[0, 1].plot(epochs, history["val_acc"], label="Val", color="#F44336", lw=1.5)
     axes[0, 1].set_xlabel("Epoch")
@@ -226,7 +220,6 @@ def plot_curves(history, path):
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
 
-    # lr schedule
     axes[1, 0].plot(epochs, history["lr"], color="#4CAF50", lw=1.5)
     axes[1, 0].set_xlabel("Epoch")
     axes[1, 0].set_ylabel("Learning Rate")
@@ -234,7 +227,6 @@ def plot_curves(history, path):
     axes[1, 0].set_yscale("log")
     axes[1, 0].grid(True, alpha=0.3)
 
-    # val accuracy zoomed in
     axes[1, 1].plot(epochs, history["val_acc"], color="#F44336", lw=1.5)
     best_ep = np.argmax(history["val_acc"]) + 1
     best_acc = max(history["val_acc"])
@@ -242,6 +234,7 @@ def plot_curves(history, path):
     axes[1, 1].axvline(x=best_ep, color="gray", ls="--", alpha=0.5)
     axes[1, 1].scatter([best_ep], [best_acc], color="#FF9800", s=100, zorder=5,
                        label=f"Best: {best_acc:.2f}% (ep {best_ep})")
+    
     axes[1, 1].set_xlabel("Epoch")
     axes[1, 1].set_ylabel("Accuracy (%)")
     axes[1, 1].set_title("Val Accuracy (zoomed)")
@@ -292,7 +285,6 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=WD, nesterov=True)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-5)
 
-    # training loop
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "lr": []}
     best_acc = 0
     wait = 0
@@ -327,7 +319,7 @@ def main():
     print(f"\nBest val accuracy: {best_acc:.2f}%")
     plot_curves(history, os.path.join(script_dir, "training_curves.png"))
 
-    # generate predictions with TTA
+    #TTA
     print("\nRunning TTA on test set...")
     model.load_state_dict(torch.load(os.path.join(script_dir, "best_model.pth"), map_location=device))
     model.eval()
@@ -350,7 +342,7 @@ def main():
     all_probs /= len(tta_transforms)
     preds = all_probs.argmax(dim=1).numpy()
 
-    # save submission
+    #save
     sub_df = sub_df.rename(columns={"ID": "image_id"})
     sub_df["label"] = [idx2label[p] for p in preds]
     sub_df = sub_df[["image_id", "label"]]
